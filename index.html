@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>视频上传与法条匹配 Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      margin: 24px; line-height: 1.6;
+    }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .btn { padding: 10px 14px; border: 0; border-radius: 8px; background: #1a73e8; color: #fff; cursor: pointer; }
+    .btn:disabled { opacity: .6; cursor: not-allowed; }
+    .muted { color: #666; font-size: 13px; }
+    .statute { padding: 10px 12px; background: #fafafa; border: 1px dashed #ddd; border-radius: 8px; margin: 8px 0; }
+    label.inline { display:inline-flex; align-items:center; gap:8px; margin:6px 12px 6px 0; }
+    .pill { display:inline-block; padding:2px 8px; border:1px solid #ddd; border-radius:9999px; font-size:12px; margin-right:6px;}
+  </style>
+</head>
+<body>
+  <h1>📤 上传视频并匹配相应法条</h1>
+
+  <div class="card">
+    <form id="uploadForm">
+      <div>
+        <label>选择视频（仅 video/*）：</label><br/>
+        <input type="file" name="video" id="video" accept="video/*" required />
+      </div>
+
+      <!-- 类型复选框区（支持多选 + 全选/全不选） -->
+      <div style="margin-top:12px;">
+        <div style="display:flex;gap:12px;align-items:center;">
+          <div>勾选视频所属类型（可多选）：</div>
+          <button type="button" class="btn" id="toggleAllBtn">全选</button>
+          <span class="muted">（再次点击可全不选）</span>
+        </div>
+        <div id="typesBox" class="grid"></div>
+        <div class="muted">提示：所选类型会与后端 statutes.category 匹配，返回相应法条。</div>
+      </div>
+
+      <div style="margin-top:16px;">
+        <button class="btn" id="submitBtn" type="submit">上传并匹配法条</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="result" class="card" style="display:none;"></div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <h3 style="margin:0;">最近上传（仅示例）</h3>
+      <button class="btn" id="refreshBtn" type="button">刷新</button>
+    </div>
+    <div id="history" class="muted">暂无数据</div>
+  </div>
+
+<script>
+  // ===== 如前后端分离部署，改这里：把 '' 改成你的后端地址 =====
+  // 例如：const API_BASE = 'https://your-backend.example.com';
+  const API_BASE = 'https://blink-organizing-sum-smallest.trycloudflare.com'; // 同源部署时保持空字符串
+
+  const FALLBACK_TYPES = ['校园暴力','交通安全','网络侵权','环境保护','公共安全'];
+
+  function renderTypes(list, warnMsg = '') {
+    const box = document.getElementById('typesBox');
+    box.innerHTML = '';
+    (list || []).forEach(t => {
+      const id = 'chk_' + t;
+      const label = document.createElement('label');
+      label.className = 'inline';
+      label.htmlFor = id;
+
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.value = t;
+      input.id = id;
+      input.name = 'types';
+
+      const span = document.createElement('span');
+      span.textContent = t;
+
+      label.appendChild(input);
+      label.appendChild(span);
+      box.appendChild(label);
+    });
+
+    // 若有告警信息，显示在类型区下面
+    const tip = document.createElement('div');
+    tip.className = 'muted';
+    tip.style.color = warnMsg ? '#b00020' : '#666';
+    tip.textContent = warnMsg || '提示：所选类型会与后端 statutes.category 匹配，返回相应法条。';
+    // 替换掉原有提示（如果有）
+    const old = box.nextElementSibling;
+    if (old && old.classList.contains('muted')) old.remove();
+    box.parentElement.appendChild(tip);
+  }
+
+  async function fetchTypes() {
+    try {
+      const res = await fetch(`${API_BASE}/api/types`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const types = Array.isArray(data.types) && data.types.length ? data.types : FALLBACK_TYPES;
+      const warn = (Array.isArray(data.types) && data.types.length) ? '' : '未从后端获取到类型，已使用本地兜底。';
+      renderTypes(types, warn);
+    } catch (e) {
+      renderTypes(FALLBACK_TYPES, `加载类型失败：${e.message}（已使用本地兜底）`);
+    }
+  }
+
+  // 全选 / 全不选
+  document.getElementById('toggleAllBtn')?.addEventListener('click', () => {
+    const checks = Array.from(document.querySelectorAll('input[name="types"]'));
+    const allChecked = checks.every(c => c.checked);
+    checks.forEach(c => (c.checked = !allChecked));
+  });
+
+  // 最近上传
+  async function refreshHistory() {
+    try {
+      const res = await fetch(`${API_BASE}/api/videos`);
+      const data = await res.json();
+      const box = document.getElementById('history');
+      if (!data.ok || !data.items || data.items.length === 0) {
+        box.textContent = '暂无数据';
+        return;
+      }
+      box.innerHTML = '';
+      data.items.forEach(v => {
+        const div = document.createElement('div');
+        div.className = 'statute';
+        div.innerHTML = `
+          <div><strong>#${v.id}</strong> ${v.original_name}</div>
+          <div class="muted">文件名：${v.filename} ｜ 大小：${(v.size_bytes/1024/1024).toFixed(2)} MB ｜ 上传时间：${v.uploaded_at}</div>
+          <div>类型：${v.types.split(',').map(t=>`<span class="pill">${t}</span>`).join('')}</div>
+        `;
+        box.appendChild(div);
+      });
+    } catch (e) {
+      // 静默失败，保持“暂无数据”
+      console.warn('加载历史失败：', e);
+    }
+  }
+
+  // 提交上传：携带视频与所选类型
+  document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+    btn.textContent = '上传中…';
+
+    try {
+      const fileInput = document.getElementById('video');
+      if (!fileInput.files.length) throw new Error('请先选择视频文件');
+
+      const selected = Array.from(document.querySelectorAll('input[name="types"]:checked'))
+                            .map(i => i.value);
+      if (selected.length === 0) throw new Error('请至少勾选一个类型');
+
+      const fd = new FormData();
+      fd.append('video', fileInput.files[0]);
+      fd.append('types', selected.join(',')); // 后端兼容逗号分隔或数组
+
+      const res = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: fd });
+      const data = await res.json();
+
+      const result = document.getElementById('result');
+      result.style.display = 'block';
+
+      if (!data.ok) {
+        result.innerHTML = `<div style="color:#b00020;">上传失败：${data.msg || '未知错误'}</div>`;
+        return;
+      }
+
+      const ms = data.matched_statutes || [];
+      result.innerHTML = `
+        <h3>上传成功 ✅</h3>
+        <div class="muted">视频ID：${data.video.id} ｜ 原文件：${data.video.original_name} ｜ 大小：${(data.video.size_bytes/1024/1024).toFixed(2)} MB</div>
+        <div style="margin:8px 0;">选择类型：${data.video.types.map(t => `<span class="pill">${t}</span>`).join('')}</div>
+        <h4>匹配到的法条（${ms.length}）</h4>
+        ${ms.length === 0 ? '<div class="muted">未匹配到法条，请完善数据库。</div>' : ms.map(s => `
+          <div class="statute">
+            <div><strong>[${s.category}] ${s.law_name}</strong> — ${s.article}</div>
+            <div>${s.content}</div>
+          </div>
+        `).join('')}
+      `;
+
+      refreshHistory();
+    } catch (err) {
+      const result = document.getElementById('result');
+      result.style.display = 'block';
+      result.innerHTML = `<div style="color:#b00020;">错误：${err.message}</div>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '上传并匹配法条';
+    }
+  });
+
+  // 首次加载
+  fetchTypes();
+  refreshHistory();
+</script>
+
+</body>
+</html>
