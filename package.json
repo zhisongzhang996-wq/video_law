@@ -1,0 +1,16 @@
+{
+  "name": "video-law-demo",
+  "version": "1.0.0",
+  "description": "Upload video with categories and match statutes.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "init:db": "node server.js --init-db"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "sqlite3": "^5.1.7"
+  }
+}
